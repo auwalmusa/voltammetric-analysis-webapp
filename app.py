@@ -19,6 +19,29 @@ def process_voltammogram(potential, current):
        'baseline': baseline
    }
 
+def process_replicates(data):
+   potential_cols = [col for col in data.columns if 'Potential' in col]
+   current_cols = [col for col in data.columns if 'Current' in col]
+   
+   all_peaks = []
+   all_data = []
+   
+   for pot_col, curr_col in zip(potential_cols, current_cols):
+       volt_data = process_voltammogram(data[pot_col].values, data[curr_col].values)
+       peak_idx = np.argmax(volt_data['peak_heights'])
+       all_peaks.append({
+           'current': volt_data['peak_heights'][peak_idx],
+           'potential': volt_data['peak_potentials'][peak_idx],
+           'voltammogram': {
+               'potential': data[pot_col].values,
+               'current': data[curr_col].values,
+               'corrected_current': volt_data['corrected_current'],
+               'peak_index': volt_data['peaks'][peak_idx]
+           }
+       })
+   
+   return all_peaks
+
 def generate_synthetic_data(base_peak_height, n_points=8, n_replicates=3, noise_level=0.01):
    concentrations = np.linspace(0.1, 2.0, n_points)
    all_data = []
@@ -65,7 +88,6 @@ def main():
    
    if uploaded_file:
        try:
-           # Modified file reading with different encodings
            if uploaded_file.name.endswith('.csv'):
                try:
                    data = pd.read_csv(uploaded_file, encoding='utf-8')
@@ -80,33 +102,47 @@ def main():
            st.subheader('Data Preview')
            st.dataframe(data.head())
            
-           # Process voltammogram
-           voltammogram = process_voltammogram(data['Potential'].values, data['Current'].values)
+           # Process replicates
+           peaks_data = process_replicates(data)
+           mean_peak = np.mean([p['current'] for p in peaks_data])
+           std_peak = np.std([p['current'] for p in peaks_data])
            
            # Generate synthetic calibration data
-           base_peak_height = np.max(voltammogram['peak_heights'])
-           synthetic_data = generate_synthetic_data(base_peak_height, n_replicates=n_replicates, noise_level=noise_level)
-           
-           # Analyze calibration
+           synthetic_data = generate_synthetic_data(mean_peak, n_replicates=len(peaks_data))
            results = analyze_calibration(synthetic_data)
            
            col1, col2 = st.columns(2)
            
            with col1:
-               st.subheader('Voltammogram')
+               st.subheader('Voltammograms')
                fig_volt = go.Figure()
-               fig_volt.add_trace(go.Scatter(x=data['Potential'], y=data['Current'], name='Raw Data'))
-               fig_volt.add_trace(go.Scatter(x=data['Potential'], y=voltammogram['corrected_current'], name='Baseline Corrected'))
-               fig_volt.add_trace(go.Scatter(x=data['Potential'][voltammogram['peaks']], 
-                                           y=data['Current'][voltammogram['peaks']], 
-                                           mode='markers', name='Peaks'))
-               fig_volt.update_layout(xaxis_title='Potential (V)', yaxis_title='Current (µA)')
+               
+               for i, peak_data in enumerate(peaks_data):
+                   volt = peak_data['voltammogram']
+                   fig_volt.add_trace(go.Scatter(
+                       x=volt['potential'], 
+                       y=volt['current'],
+                       name=f'Replicate {i+1}'
+                   ))
+                   fig_volt.add_trace(go.Scatter(
+                       x=[volt['potential'][volt['peak_index']]],
+                       y=[volt['current'][volt['peak_index']]],
+                       mode='markers',
+                       name=f'Peak {i+1}'
+                   ))
+               
+               fig_volt.update_layout(
+                   xaxis_title='Potential (V)',
+                   yaxis_title='Current (µA)',
+                   showlegend=True
+               )
                st.plotly_chart(fig_volt)
            
            with col2:
                st.subheader('Calibration Curve')
                fig_cal = go.Figure()
                grouped = results['grouped_data']
+               
                fig_cal.add_trace(go.Scatter(
                    x=grouped['concentration'],
                    y=grouped['current']['mean'],
@@ -123,7 +159,11 @@ def main():
                    line=dict(dash='dash'),
                    name=f'R² = {results["r_squared"]:.4f}'
                ))
-               fig_cal.update_layout(xaxis_title='Relative Concentration', yaxis_title='Peak Current (µA)')
+               
+               fig_cal.update_layout(
+                   xaxis_title='Relative Concentration',
+                   yaxis_title='Peak Current (µA)'
+               )
                st.plotly_chart(fig_cal)
            
            st.subheader('Analysis Results')
@@ -157,7 +197,7 @@ def main():
            
        except Exception as e:
            st.error(f'Error processing file: {str(e)}')
-           st.error("Please ensure your CSV columns are named 'Potential' and 'Current'")
+           st.error("Please ensure your CSV contains 'Potential' and 'Current' column pairs")
    
    else:
        st.info('Please upload a CSV or Excel file containing voltammetric data')
