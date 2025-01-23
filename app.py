@@ -10,9 +10,7 @@ st.set_page_config(page_title="Voltammetric Analysis App", layout="wide")
 def process_voltammogram(potential, current):
    baseline = savgol_filter(current, window_length=21, polyorder=2)
    corrected_current = current - baseline
-   
    peaks, properties = find_peaks(current, height=5, distance=50, prominence=2)
-   
    return {
        'peaks': peaks,
        'peak_heights': current[peaks],
@@ -24,12 +22,10 @@ def process_voltammogram(potential, current):
 def generate_synthetic_data(base_peak_height, n_points=8, n_replicates=3, noise_level=0.01):
    concentrations = np.linspace(0.1, 2.0, n_points)
    all_data = []
-   
    for conc in concentrations:
        for _ in range(n_replicates):
            current = base_peak_height * conc * (1 + np.random.normal(0, noise_level))
            all_data.append({'concentration': conc, 'current': current})
-   
    return pd.DataFrame(all_data)
 
 def analyze_calibration(df):
@@ -69,8 +65,15 @@ def main():
    
    if uploaded_file:
        try:
+           # Modified file reading with different encodings
            if uploaded_file.name.endswith('.csv'):
-               data = pd.read_csv(uploaded_file)
+               try:
+                   data = pd.read_csv(uploaded_file, encoding='utf-8')
+               except UnicodeDecodeError:
+                   try:
+                       data = pd.read_csv(uploaded_file, encoding='latin1')
+                   except UnicodeDecodeError:
+                       data = pd.read_csv(uploaded_file, encoding='cp1252')
            else:
                data = pd.read_excel(uploaded_file)
            
@@ -143,7 +146,7 @@ def main():
                ]
            })
            
-           csv = results_df.to_csv(index=False)
+           csv = results_df.to_csv(index=False).encode('utf-8')
            st.download_button(
                "Download Results",
                csv,
@@ -154,6 +157,7 @@ def main():
            
        except Exception as e:
            st.error(f'Error processing file: {str(e)}')
+           st.error("Please ensure your CSV columns are named 'Potential' and 'Current'")
    
    else:
        st.info('Please upload a CSV or Excel file containing voltammetric data')
